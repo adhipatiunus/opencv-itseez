@@ -1753,15 +1753,9 @@ void OCL4DNNConvSpatial<float>::setupConvolution(const float *bottom, float *top
             if (simd_size == 16 && !(this->group_ == 1 || M_ % 16 == 0))
                 continue;
             int width_max, height_max, block_size_max;
-            if (simd_size == 8) {
-                width_max = 16;
-                height_max = 16;
-                block_size_max = 64;
-            } else {
-                width_max = 14;
-                height_max = 14;
-                block_size_max = 32;
-            }
+            width_max = 14;
+            height_max = 8;
+            block_size_max = 32;
             for (uint32_t width = width_max; width > 0; width--) {
                 int candidate = 0;
                 if (width > output_w_)
@@ -1777,9 +1771,18 @@ void OCL4DNNConvSpatial<float>::setupConvolution(const float *bottom, float *top
                         ((num_ * M_ * output_w_ * output_h_ / static_cast<float>(width * height)) >=
                         max_compute_units * 7 * 16))
                         continue;
-                    int tile_x = (kernel_w_ * dilation_w_ + (width - 1) * stride_w_ + 3) & ~3;
+                    int actual_tile_x = kernel_w_ * dilation_w_ + (width - 1) * stride_w_;
+                    int tile_x = (actual_tile_x + 3) & ~3;
                     int tile_y = kernel_h_ * dilation_h_ + (height - 1) * stride_h_;
                     if (tile_x > (4 * simd_size))
+                        continue;
+                    // If actual_tile_x is multiple of 4, we may waste some IO bandwidth.
+                    // This could reduce 75% tuning candidates. It has slightly performance
+                    // impact for the final tuning result, less than 2% for most cases.
+                    if (actual_tile_x % 4 != 0)
+                        continue;
+                    if ((width * height +
+                       (tile_x * tile_y + simd_size - 1)/ simd_size) > block_size_max)
                         continue;
                     int tile_y_stride = (4 * simd_size) / tile_x;
 
